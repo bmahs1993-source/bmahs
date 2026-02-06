@@ -13,6 +13,61 @@ import AIChatAssistant from './components/AIChatAssistant';
 // IMPORTANT: Ensure your Google Apps Script is deployed as a Web App with access set to "Anyone"
 const CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbys0j2Qq7-GMcFnJFD3NhWufGhNvjnzV-08ZJEpF9nf33D2UiJrYjlDqyl_szLFqM8b/exec";
 
+const parseCloudPayload = (rawData: unknown): unknown => {
+  if (typeof rawData !== 'string') return rawData;
+
+  try {
+    return JSON.parse(rawData);
+  } catch {
+    return null;
+  }
+};
+
+const normalizeSchoolData = (rawData: unknown): SchoolData | null => {
+  const payload = parseCloudPayload(rawData);
+  if (!payload || typeof payload !== 'object') return null;
+
+  const parsedPayload = payload as Record<string, unknown>;
+  const innerData = parseCloudPayload(parsedPayload.data);
+  const parsed = ((innerData && typeof innerData === 'object') ? innerData : payload) as Partial<SchoolData>;
+
+  return {
+    ...INITIAL_SCHOOL_DATA,
+    ...parsed,
+    stats: {
+      ...INITIAL_SCHOOL_DATA.stats,
+      ...(parsed.stats || {}),
+    },
+    tickerConfig: {
+      ...INITIAL_SCHOOL_DATA.tickerConfig,
+      ...(parsed.tickerConfig || {}),
+    },
+    themeConfig: {
+      ...INITIAL_SCHOOL_DATA.themeConfig,
+      ...(parsed.themeConfig || {}),
+    },
+    headTeacher: parsed.headTeacher || INITIAL_SCHOOL_DATA.headTeacher,
+    assistantHeadTeachers: Array.isArray(parsed.assistantHeadTeachers) ? parsed.assistantHeadTeachers : INITIAL_SCHOOL_DATA.assistantHeadTeachers,
+    committeeMembers: Array.isArray(parsed.committeeMembers) ? parsed.committeeMembers : INITIAL_SCHOOL_DATA.committeeMembers,
+    governingBody: Array.isArray(parsed.governingBody) ? parsed.governingBody : INITIAL_SCHOOL_DATA.governingBody,
+    newsEvents: Array.isArray(parsed.newsEvents) ? parsed.newsEvents : INITIAL_SCHOOL_DATA.newsEvents,
+    syllabuses: Array.isArray(parsed.syllabuses) ? parsed.syllabuses : INITIAL_SCHOOL_DATA.syllabuses,
+    classRoutines: Array.isArray(parsed.classRoutines) ? parsed.classRoutines : INITIAL_SCHOOL_DATA.classRoutines,
+    classTeachers: Array.isArray(parsed.classTeachers) ? parsed.classTeachers : INITIAL_SCHOOL_DATA.classTeachers,
+    classInfoLinks: Array.isArray(parsed.classInfoLinks) ? parsed.classInfoLinks : INITIAL_SCHOOL_DATA.classInfoLinks,
+    banners: Array.isArray(parsed.banners) ? parsed.banners : INITIAL_SCHOOL_DATA.banners,
+    notices: Array.isArray(parsed.notices) ? parsed.notices : INITIAL_SCHOOL_DATA.notices,
+    exams: Array.isArray(parsed.exams) ? parsed.exams : INITIAL_SCHOOL_DATA.exams,
+    results: Array.isArray(parsed.results) ? parsed.results : INITIAL_SCHOOL_DATA.results,
+    sections: Array.isArray(parsed.sections) ? parsed.sections : INITIAL_SCHOOL_DATA.sections,
+    faculty: Array.isArray(parsed.faculty) ? parsed.faculty : INITIAL_SCHOOL_DATA.faculty,
+    gallery: Array.isArray(parsed.gallery) ? parsed.gallery : INITIAL_SCHOOL_DATA.gallery,
+    applications: Array.isArray(parsed.applications) ? parsed.applications : INITIAL_SCHOOL_DATA.applications,
+    officeDriveLinks: Array.isArray(parsed.officeDriveLinks) ? parsed.officeDriveLinks : INITIAL_SCHOOL_DATA.officeDriveLinks,
+    officeProfiles: Array.isArray(parsed.officeProfiles) ? parsed.officeProfiles : INITIAL_SCHOOL_DATA.officeProfiles,
+  };
+};
+
 // Robust persistence helper using IndexedDB + Google Apps Script Cloud Sync
 const dbHelper = {
   save: async (data: SchoolData): Promise<boolean> => {
@@ -52,14 +107,23 @@ const dbHelper = {
       }
 
       try {
-        // We use 'cors' mode. Note: GAS will redirect, and the fetch might throw a CORS error 
-        // on the redirect, but the POST data usually arrives successfully regardless.
+        // Send both raw JSON and a `data` field to support common Apps Script doPost parsers.
+        const formPayload = new URLSearchParams({ data: jsonString });
+
         await fetch(CLOUD_API_URL, {
           method: 'POST',
-          mode: 'no-cors', // Keeps it simple for GAS redirects
-          headers: { 'Content-Type': 'text/plain' }, // Using text/plain avoids CORS preflight issues with GAS
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: formPayload.toString()
+        });
+
+        await fetch(CLOUD_API_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain' },
           body: jsonString
         });
+
         console.log("Cloud Sync signal sent successfully.");
       } catch (err) {
         console.error("Cloud Sync failed:", err);
@@ -74,9 +138,9 @@ const dbHelper = {
       try {
         const response = await fetch(CLOUD_API_URL);
         if (response.ok) {
-          const cloudData = await response.json();
-          // Verify we got valid school data and not an empty object
-          if (cloudData && cloudData.schoolName && cloudData.schoolName !== INITIAL_SCHOOL_DATA.schoolName) {
+          const cloudData = normalizeSchoolData(await response.text());
+          // Accept any valid cloud payload (even when schoolName is unchanged)
+          if (cloudData) {
             console.log("Portal data synchronized from Cloud.");
             return cloudData;
           }
@@ -101,7 +165,7 @@ const dbHelper = {
           const getReq = tx.objectStore('data').get('current');
           getReq.onsuccess = () => {
             db.close();
-            const result = getReq.result || null;
+            const result = normalizeSchoolData(getReq.result) || null;
             if (result) console.log("Loaded data from Local Database.");
             resolve(result);
           };
