@@ -1,0 +1,7 @@
+{
+  "name": "Copy of 78",
+  "description": "A comprehensive school management and informational website with dual student/admin modes, featuring persistent storage for notices, banners, and school content.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
