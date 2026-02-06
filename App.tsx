@@ -14,13 +14,43 @@ import AIChatAssistant from './components/AIChatAssistant';
 const CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbys0j2Qq7-GMcFnJFD3NhWufGhNvjnzV-08ZJEpF9nf33D2UiJrYjlDqyl_szLFqM8b/exec";
 
 const parseCloudPayload = (rawData: unknown): unknown => {
+  if (rawData == null) return null;
   if (typeof rawData !== 'string') return rawData;
 
+  const trimmed = rawData.trim();
+  if (!trimmed) return null;
+
+  const tryParseJson = (value: string): unknown => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = tryParseJson(trimmed);
+  if (direct) return direct;
+
+  // Some Apps Script responses are URL-encoded JSON strings.
   try {
-    return JSON.parse(rawData);
+    const decoded = decodeURIComponent(trimmed);
+    const decodedParsed = tryParseJson(decoded);
+    if (decodedParsed) return decodedParsed;
   } catch {
-    return null;
+    // ignore decode failures
   }
+
+  // Some deployments return querystring-like responses: data=<json>
+  if (trimmed.includes('=')) {
+    const params = new URLSearchParams(trimmed);
+    const candidate = params.get('data') || params.get('payload') || params.get('json');
+    if (candidate) {
+      const parsedCandidate = parseCloudPayload(candidate);
+      if (parsedCandidate) return parsedCandidate;
+    }
+  }
+
+  return null;
 };
 
 const normalizeSchoolData = (rawData: unknown): SchoolData | null => {
@@ -107,21 +137,18 @@ const dbHelper = {
       }
 
       try {
-        // Send both raw JSON and a `data` field to support common Apps Script doPost parsers.
-        const formPayload = new URLSearchParams({ data: jsonString });
+        // Send in a single request with multiple common keys for Apps Script parsers.
+        const formPayload = new URLSearchParams({
+          data: jsonString,
+          payload: jsonString,
+          json: jsonString,
+        });
 
         await fetch(CLOUD_API_URL, {
           method: 'POST',
           mode: 'no-cors',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
           body: formPayload.toString()
-        });
-
-        await fetch(CLOUD_API_URL, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain' },
-          body: jsonString
         });
 
         console.log("Cloud Sync signal sent successfully.");
